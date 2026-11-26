@@ -1,0 +1,6 @@
+{
+  "name": "CuePan Studio",
+  "description": "Independent stereo panning audio mixer, metronome click, voice cue, and timeline pan automation DAW for Android.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

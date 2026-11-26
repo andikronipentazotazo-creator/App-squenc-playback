@@ -1,0 +1,100 @@
+name: Publish Prebuilt Android Debug APK
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - "apk-distribution/app-debug.apk"
+      - "apk-distribution/app-debug.apk.sha256"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-apk-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate prebuilt APK and SHA-256 checksum
+        id: validate
+        run: |
+          set -euo pipefail
+          APK_PATH="apk-distribution/app-debug.apk"
+          SHA_PATH="apk-distribution/app-debug.apk.sha256"
+
+          if [ ! -s "$APK_PATH" ]; then
+            echo "::error::Missing or empty prebuilt APK at $APK_PATH"
+            exit 1
+          fi
+
+          if [ ! -s "$SHA_PATH" ]; then
+            echo "::error::Missing or empty checksum file at $SHA_PATH"
+            exit 1
+          fi
+
+          (
+            cd apk-distribution
+            sha256sum -c app-debug.apk.sha256
+          )
+
+          unzip -tq "$APK_PATH"
+          unzip -l "$APK_PATH" AndroidManifest.xml > /dev/null
+
+          APK_SIZE_BYTES=$(wc -c < "$APK_PATH" | tr -d '[:space:]')
+          APK_SHA256=$(awk '{print $1}' "$SHA_PATH")
+          echo "apk_size_bytes=$APK_SIZE_BYTES" >> "$GITHUB_OUTPUT"
+          echo "apk_sha256=$APK_SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload APK asset
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="debug-apk-build-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          DIRECT_URL="https://github.com/${GITHUB_REPOSITORY}/releases/latest/download/app-debug.apk"
+
+          RELEASE_URL=$(gh release create "$TAG" \
+            "apk-distribution/app-debug.apk#app-debug.apk" \
+            --title "CuePan Studio Debug APK ($TAG)" \
+            --notes "Prebuilt Android debug APK compiled in native Google AI Studio Android environment.
+
+          - Application: CuePan Studio
+          - Application ID: com.aistudio.cuepanstudio.k7x9m2
+          - SHA-256: \`${{ steps.validate.outputs.apk_sha256 }}\`
+          - Size (bytes): ${{ steps.validate.outputs.apk_size_bytes }}" \
+            --latest)
+
+          echo "release_tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+          echo "direct_url=$DIRECT_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Write release summary
+        if: always()
+        run: |
+          {
+            echo "## Android Debug APK Release Summary"
+            echo ""
+            if [ "${{ job.status }}" = "success" ]; then
+              echo "- **Status:** SUCCESSFUL"
+              echo "- **Application:** CuePan Studio"
+              echo "- **Application ID:** \`com.aistudio.cuepanstudio.k7x9m2\`"
+              echo "- **Release Tag:** \`${{ steps.release.outputs.release_tag }}\`"
+              echo "- **APK Size (bytes):** ${{ steps.validate.outputs.apk_size_bytes }}"
+              echo "- **SHA-256:** \`${{ steps.validate.outputs.apk_sha256 }}\`"
+              echo "- **Release Page:** ${{ steps.release.outputs.release_url }}"
+              echo "- **Direct Download URL:** ${{ steps.release.outputs.direct_url }}"
+            else
+              echo "- **Status:** FAILED"
+              echo "- **Failure Stage:** Check validation or GitHub Release upload step logs above."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
